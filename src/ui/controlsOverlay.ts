@@ -13,6 +13,12 @@ export function createControlsOverlay(
     max: number;
     step: number;
     value: number;
+    /**
+     * Which event should trigger the actual runtime update.
+     * Using `change` for expensive params (like `particleCount`) prevents
+     * continuous WebGL/sampling work while dragging.
+     */
+    event?: "input" | "change";
   }) => {
     const row = document.createElement("div");
     row.className = "controls-row";
@@ -28,16 +34,29 @@ export function createControlsOverlay(
     input.step = String(opts.step);
     input.value = String(opts.value);
 
-    input.addEventListener("input", () => {
-      onChange({ [opts.key]: Number(input.value) } as Partial<ParticleTextParams>);
-    });
-
     const valueEl = document.createElement("div");
     valueEl.className = "controls-value";
     valueEl.textContent = String(opts.value);
-    input.addEventListener("input", () => {
+
+    const updateValueEl = () => {
       valueEl.textContent = input.value;
-    });
+    };
+    const commit = () => {
+      onChange({ [opts.key]: Number(input.value) } as Partial<ParticleTextParams>);
+    };
+
+    if (opts.event === "change") {
+      input.addEventListener("input", updateValueEl);
+      input.addEventListener("change", () => {
+        updateValueEl();
+        commit();
+      });
+    } else {
+      input.addEventListener("input", () => {
+        updateValueEl();
+        commit();
+      });
+    }
 
     row.appendChild(label);
     row.appendChild(input);
@@ -47,6 +66,17 @@ export function createControlsOverlay(
 
   // These defaults match src/main.ts. When we implement real particle params,
   // we will derive them from ParticleTextApp state.
+  root.appendChild(
+    makeRange({
+      label: "Particle count",
+      key: "particleCount",
+      min: 2000,
+      max: 20000,
+      step: 500,
+      value: 12000,
+      event: "change",
+    })
+  );
   root.appendChild(
     makeRange({
       label: "Mouse radius",
@@ -123,11 +153,18 @@ export function createControlsOverlay(
       backdrop-filter: blur(10px);
       z-index: 10;
       font-size: 12px;
+      line-height: 1.25;
+      max-height: 80vh;
+      overflow: auto;
       box-sizing: border-box;
+      /* Keep the hero interactive: only the actual inputs should capture pointer events. */
+      pointer-events: none;
     }
     .controls-row{ display:flex; align-items:center; gap:10px; margin: 8px 0; }
     .controls-label{ width: 120px; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
     .controls input[type="range"]{ flex: 1; }
+    .controls input[type="range"]{ pointer-events: auto; }
+    .controls .controls-value{ pointer-events: none; }
     .controls-value{ width: 50px; text-align:right; font-variant-numeric: tabular-nums; opacity: .9;}
   `;
   root.appendChild(style);
@@ -136,7 +173,7 @@ export function createControlsOverlay(
   const hint = document.createElement("div");
   hint.style.marginTop = "6px";
   hint.style.opacity = "0.75";
-  hint.textContent = "Controls (UI stub for runtime tuning)";
+  hint.textContent = "Controls (runtime tuning)";
   root.appendChild(hint);
 
   return root;
