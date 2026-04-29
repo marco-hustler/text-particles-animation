@@ -300,7 +300,10 @@ export class ParticleTextApp {
   private simStep(dt: number): void {
     // Smooth mouse influence to avoid sudden force changes.
     const influenceTarget = this.pointerInside ? 1 : 0;
-    const fadeRate = 10; // higher => faster response
+    // Use different rates for enter/exit so the "release" feels natural.
+    const fadeInRate = 14; // higher => faster response
+    const fadeOutRate = 6; // lower => softer return
+    const fadeRate = influenceTarget > this.mouseInfluence ? fadeInRate : fadeOutRate;
     const deltaInfluence = influenceTarget - this.mouseInfluence;
     this.mouseInfluence += deltaInfluence * (1 - Math.exp(-fadeRate * dt));
 
@@ -312,6 +315,10 @@ export class ParticleTextApp {
     const invMinDim = 2 / Math.max(1, Math.min(w, h));
 
     const dampingFactor = Math.pow(this.params.damping, dt * 60);
+    // Extra damping during return helps avoid uncontrolled oscillations.
+    const returnFactor = 1 - this.mouseInfluence; // 0..1
+    const dampingExtra = 1 - 0.12 * returnFactor; // never invert damping
+    const dampingFactorEff = dampingFactor * dampingExtra;
     const springStrength = this.params.springStrength;
     const mouseAccelScale = 0.12;
 
@@ -322,7 +329,10 @@ export class ParticleTextApp {
 
     // Low-amplitude equilibrium offset: keeps the "alive" feel subtle
     // without injecting high-frequency acceleration jitter.
-    const aliveOffsetClipAmp = this.params.aliveNoiseAmplitude * 0.02;
+    // While the mouse is leaving, slightly reduce this to help settle back
+    // toward the original text targets (less visual "ringing").
+    const aliveScale = 0.25 + 0.75 * this.mouseInfluence;
+    const aliveOffsetClipAmp = this.params.aliveNoiseAmplitude * 0.02 * aliveScale;
     const t = this.simTime;
     const f = this.params.aliveNoiseFrequency;
 
@@ -377,8 +387,8 @@ export class ParticleTextApp {
       let vx = this.velocities[ix]!;
       let vy = this.velocities[ix + 1]!;
 
-      vx = vx * dampingFactor + ax * dt;
-      vy = vy * dampingFactor + ay * dt;
+      vx = vx * dampingFactorEff + ax * dt;
+      vy = vy * dampingFactorEff + ay * dt;
       vx = clamp(vx);
       vy = clamp(vy);
 
