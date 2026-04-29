@@ -5,6 +5,10 @@ export type SampleTextTargetsInput = {
   canvasHeight: number; // physical px
   fontFamily?: string;
   fontWeight?: number;
+  /**
+   * Multiplier on the auto-calculated font size. 1.0 = default, 0.5 = half, 2.0 = double.
+   */
+  fontScale?: number;
 };
 
 /**
@@ -18,6 +22,7 @@ export function sampleTextTargets({
   canvasHeight,
   fontFamily = "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial",
   fontWeight = 700,
+  fontScale = 1.0,
 }: SampleTextTargetsInput): Float32Array {
   const safeParticleCount = Math.max(1, Math.floor(particleCount));
   const w = Math.max(1, Math.floor(canvasWidth));
@@ -46,17 +51,17 @@ export function sampleTextTargets({
   ctx.clearRect(0, 0, sw, sh);
   const drawText = (text ?? "").trim() || "TEXT";
 
-  // Fit text to the viewport much more aggressively so the particle target
-  // shape is clearly legible even at first load on wide screens.
-  const maxTextWidth = sw * 0.68;
-  const maxTextHeight = sh * 0.28;
-  let fontSize = Math.max(24, Math.floor(Math.min(sw, sh) * 0.24));
+  // Fit text to the viewport, scaling by fontScale.
+  const scale01 = Math.max(0.1, fontScale);
+  const maxTextWidth = sw * 0.68 * scale01;
+  const maxTextHeight = sh * 0.28 * scale01;
+  let fontSize = Math.max(12, Math.floor(Math.min(sw, sh) * 0.24 * scale01));
 
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(255,255,255,1)";
 
-  while (fontSize > 18) {
+  while (fontSize > 8) {
     ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
     const metrics = ctx.measureText(drawText);
     const textWidth = metrics.width;

@@ -22,6 +22,11 @@ export type ParticleTextParams = {
   particleColor?: string;
   /** Hex color for the page background, e.g. "#05060a". Defaults to near-black. */
   backgroundColor?: string;
+  /**
+   * Multiplier applied to the auto-calculated font size when sampling text targets.
+   * 1.0 = default size, 0.5 = half, 2.0 = double. Defaults to 1.0.
+   */
+  fontScale?: number;
 };
 
 export type ParticleTextState = {

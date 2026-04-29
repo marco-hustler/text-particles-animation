@@ -19,6 +19,7 @@ const app = new ParticleTextApp(canvas, {
   textMorphDurationMs: 700,
   particleColor: "#f2fafe",
   backgroundColor: "#05060a",
+  fontScale: 1.0,
 });
 
 app.start();

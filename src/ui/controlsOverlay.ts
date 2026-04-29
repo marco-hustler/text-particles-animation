@@ -131,7 +131,50 @@ export function createControlsOverlay(
     return { row, setValue };
   };
 
-  // ── sliders ──────────────────────────────────────────────────────────────────
+  /**
+   * Builds a text-input row that maps to `{ texts: [value], textIndex: 0 }`.
+   * Fires on Enter / blur and after a 350 ms debounce while typing.
+   */
+  const makeTextInput = (initialValue: string) => {
+    const row = document.createElement("div");
+    row.className = "controls-row";
+
+    const label = document.createElement("label");
+    label.className = "controls-label";
+    label.textContent = "Text";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = initialValue;
+    input.placeholder = "Type anything…";
+    input.className = "controls-text-input";
+    input.spellcheck = false;
+
+    let debounceTimer = 0;
+    const commit = () => {
+      const v = input.value.trim() || initialValue;
+      onChange({ texts: [v], textIndex: 0 });
+    };
+    input.addEventListener("change", () => { commit(); });
+    input.addEventListener("input", () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(commit, 350);
+    });
+
+    row.appendChild(label);
+    row.appendChild(input);
+    return row;
+  };
+
+  // ── text + font scale (top section) ─────────────────────────────────────────
+  const topDivider = document.createElement("div");
+  topDivider.className = "controls-divider";
+
+  root.appendChild(makeTextInput("HELLO"));
+  root.appendChild(
+    makeRange({ label: "Font scale", key: "fontScale", min: 0.3, max: 2.5, step: 0.05, value: 1.0 })
+  );
+  root.appendChild(topDivider);
   root.appendChild(makeRange({ label: "Particle count", key: "particleCount", min: 2000, max: 20000, step: 500, value: 12000, event: "change" }));
   root.appendChild(makeRange({ label: "Mouse radius",   key: "mouseRadius",   min: 30,   max: 220,   step: 1,     value: 120 }));
   root.appendChild(makeRange({ label: "Mouse force",    key: "mouseForce",    min: 0.1,  max: 3.0,   step: 0.01,  value: 1.35 }));
@@ -238,6 +281,22 @@ export function createControlsOverlay(
     .controls-value--mono{
       font-family: ui-monospace, monospace;
       font-size: 10px;
+    }
+    .controls-text-input{
+      flex: 1;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 6px;
+      color: var(--ui-text);
+      font-size: 12px;
+      padding: 4px 8px;
+      outline: none;
+      pointer-events: auto;
+      min-width: 0;
+    }
+    .controls-text-input:focus{
+      border-color: rgba(255,255,255,0.35);
+      background: rgba(255,255,255,0.1);
     }
     .controls-swatch{
       flex: 1;

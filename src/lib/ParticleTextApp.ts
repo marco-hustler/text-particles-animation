@@ -23,8 +23,8 @@ export class ParticleTextApp {
   // During the initial seconds after (re)building the simulation we slightly
   // increase attraction strength so the text converges quickly.
   private convergeElapsed = 0;
-  private convergeWarmupSec = 0.9;
-  private settleSnapSec = 1.8;
+  private convergeWarmupSec = 1.8;
+  private settleSnapSec = 3.2;
 
   private positions: Float32Array = new Float32Array(0); // clip-space [-1..1]
   private velocities: Float32Array = new Float32Array(0);
@@ -205,13 +205,18 @@ export class ParticleTextApp {
       typeof next.particleCount === "number" && next.particleCount !== prev.particleCount;
     const textIndexChanged =
       typeof next.textIndex === "number" && next.textIndex !== prev.textIndex;
+    const textsChanged =
+      Array.isArray(next.texts) &&
+      (next.texts[this.params.textIndex] ?? "") !== (prev.texts[prev.textIndex] ?? "");
+    const fontScaleChanged =
+      typeof next.fontScale === "number" && next.fontScale !== prev.fontScale;
 
     if (particleCountChanged) {
       this.rebuildSimulation(true);
       return;
     }
 
-    if (textIndexChanged) {
+    if (textIndexChanged || textsChanged || fontScaleChanged) {
       this.startTextMorph(this.params.textIndex);
     }
   }
@@ -343,6 +348,7 @@ export class ParticleTextApp {
       text,
       canvasWidth: this.canvas.width,
       canvasHeight: this.canvas.height,
+      fontScale: this.params.fontScale ?? 1.0,
     });
 
     if (sampled.length !== this.targets.length) {
@@ -366,8 +372,8 @@ export class ParticleTextApp {
 
   private getConvergenceBoost(): number {
     // Slower and smoother initial formation:
-    // starts around ~4.2x and decays progressively to ~1x.
-    return 1 + 3.2 * Math.exp(-this.convergeElapsed / this.convergeWarmupSec);
+    // starts around ~2.8x and decays progressively to ~1x.
+    return 1 + 1.8 * Math.exp(-this.convergeElapsed / this.convergeWarmupSec);
   }
 
   private getTextMorphDurationSec(): number {
@@ -398,6 +404,7 @@ export class ParticleTextApp {
       text,
       canvasWidth: this.canvas.width,
       canvasHeight: this.canvas.height,
+      fontScale: this.params.fontScale ?? 1.0,
     });
   }
 
@@ -585,7 +592,7 @@ export class ParticleTextApp {
       // toward the target. This is softer than teleporting but much more
       // decisive than pure spring integration.
       if (snapBlend > 0) {
-        const snapStrength = 0.1 * snapBlend;
+        const snapStrength = 0.065 * snapBlend;
         x += tx * snapStrength;
         y += ty * snapStrength;
         // Also damp residual velocity while settling so particles stop looking
