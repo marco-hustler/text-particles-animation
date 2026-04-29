@@ -1,0 +1,25 @@
+# Project deps / build artifacts
+node_modules/
+dist/
+build/
+
+# Environment / secrets
+.env
+.env.*
+*.key
+*.pem
+
+# OS
+.DS_Store
+
+# Local Cursor / Claude / Ralph runtime data (private)
+.cursor/
+.claude/
+.ralph/
+
+# Ralph internal tasks/logs (keep local; not part of public repo)
+tasks/
+
+# Logs / coverage
+*.log
+coverage/
