@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "lint": "npm run typecheck",
     "typecheck": "tsc -p tsconfig.json",
     "build": "tsc -p tsconfig.json && vite build",
     "test": "npm run build",
