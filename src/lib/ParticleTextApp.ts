@@ -313,7 +313,6 @@ export class ParticleTextApp {
 
     const dampingFactor = Math.pow(this.params.damping, dt * 60);
     const springStrength = this.params.springStrength;
-    const noiseAccel = this.params.aliveNoiseAmplitude * 0.02;
     const mouseAccelScale = 0.12;
 
     const rPx = this.params.mouseRadius;
@@ -321,14 +320,35 @@ export class ParticleTextApp {
     const maxVel = 4.0;
     const clamp = (v: number) => Math.max(-maxVel, Math.min(maxVel, v));
 
+    // Low-amplitude equilibrium offset: keeps the "alive" feel subtle
+    // without injecting high-frequency acceleration jitter.
+    const aliveOffsetClipAmp = this.params.aliveNoiseAmplitude * 0.02;
+    const t = this.simTime;
+    const f = this.params.aliveNoiseFrequency;
+
     for (let i = 0; i < this.particleCount; i++) {
       const ix = i * 2;
       let x = this.positions[ix]!;
       let y = this.positions[ix + 1]!;
 
       // Spring force towards target positions.
-      const tx = this.targets[ix]! - x;
-      const ty = this.targets[ix + 1]! - y;
+      const sx = this.seedsX[i]!;
+      const sy = this.seedsY[i]!;
+
+      // Multi-octave, smooth-ish "organic" drift. The offsets are in clip-space
+      // and applied to the spring equilibrium, not directly as acceleration.
+      const n1 = Math.sin(t * f + sx);
+      const n2 = Math.sin(t * f * 0.73 + sx * 2.33);
+      const n3 = Math.sin(t * f * 1.27 + sx * 0.77);
+      const nx = (n1 + 0.55 * n2 + 0.25 * n3) / (1 + 0.55 + 0.25);
+
+      const m1 = Math.cos(t * f + sy);
+      const m2 = Math.cos(t * f * 0.81 + sy * 1.91);
+      const m3 = Math.cos(t * f * 1.17 + sy * 0.58);
+      const ny = (m1 + 0.55 * m2 + 0.25 * m3) / (1 + 0.55 + 0.25);
+
+      const tx = this.targets[ix]! + nx * aliveOffsetClipAmp - x;
+      const ty = this.targets[ix + 1]! + ny * aliveOffsetClipAmp - y;
       let ax = tx * springStrength;
       let ay = ty * springStrength;
 
@@ -352,12 +372,6 @@ export class ParticleTextApp {
           }
         }
       }
-
-      // Subtle "alive" oscillation to keep motion from looking dead.
-      const sx = this.seedsX[i]!;
-      const sy = this.seedsY[i]!;
-      ax += Math.sin(this.simTime * this.params.aliveNoiseFrequency + sx) * noiseAccel;
-      ay += Math.cos(this.simTime * this.params.aliveNoiseFrequency + sy) * noiseAccel;
 
       // Semi-implicit Euler with damping for stability.
       let vx = this.velocities[ix]!;
