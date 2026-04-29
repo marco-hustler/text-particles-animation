@@ -18,6 +18,10 @@ export type ParticleTextParams = {
   textSwitchIntervalMs?: number;
   /** Duration of the morph between target positions (milliseconds). */
   textMorphDurationMs?: number;
+  /** Hex color for the particles, e.g. "#f2fafe". Defaults to near-white. */
+  particleColor?: string;
+  /** Hex color for the page background, e.g. "#05060a". Defaults to near-black. */
+  backgroundColor?: string;
 };
 
 export type ParticleTextState = {

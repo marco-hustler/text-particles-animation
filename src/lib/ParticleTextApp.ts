@@ -20,6 +20,11 @@ export class ParticleTextApp {
   private fixedDt = 1 / 60;
   private accumulator = 0;
   private simTime = 0;
+  // During the initial seconds after (re)building the simulation we slightly
+  // increase attraction strength so the text converges quickly.
+  private convergeElapsed = 0;
+  private convergeWarmupSec = 0.9;
+  private settleSnapSec = 1.8;
 
   private positions: Float32Array = new Float32Array(0); // clip-space [-1..1]
   private velocities: Float32Array = new Float32Array(0);
@@ -30,6 +35,16 @@ export class ParticleTextApp {
 
   private seedsX: Float32Array = new Float32Array(0);
   private seedsY: Float32Array = new Float32Array(0);
+  // Per-particle disturbance memory (0..1): used to restore only the local
+  // area affected by mouse interaction.
+  private disturbed: Float32Array = new Float32Array(0);
+
+  // Elapsed time since the mouse last left the canvas (Infinity = mouse never
+  // left yet or the return animation has fully completed). When it is finite
+  // and small, we re-run the same strong snap/converge pass that handles the
+  // initial text formation, giving the particles visible elastic return.
+  private restoreElapsed: number = Infinity;
+  private prevPointerInside: boolean = false;
 
   private pointerInside = false;
   private mouseXClip = 0;
@@ -38,6 +53,7 @@ export class ParticleTextApp {
 
   private onPointerMove: ((ev: PointerEvent) => void) | null = null;
   private onPointerLeave: ((ev: Event) => void) | null = null;
+  private onWindowPointerMove: ((ev: PointerEvent) => void) | null = null;
   private onKeyDown: ((ev: KeyboardEvent) => void) | null = null;
   private autoTextElapsed = 0;
 
@@ -45,6 +61,11 @@ export class ParticleTextApp {
     this.canvas = canvas;
 
     this.params = params;
+    this.state = {
+      dpr: 1,
+      w: 1,
+      h: 1,
+    };
     this.state = {
       dpr: 1,
       w: 1,
@@ -140,6 +161,7 @@ export class ParticleTextApp {
   start(): void {
     if (this.rafId != null) return;
 
+    this.applyBackgroundColor(this.params.backgroundColor ?? "#05060a");
     this.installPointerListeners();
     this.installKeyboardListeners();
     this.resize();
@@ -175,6 +197,10 @@ export class ParticleTextApp {
     const prev = this.params;
     this.params = { ...this.params, ...next };
 
+    if (typeof next.backgroundColor === "string" && next.backgroundColor !== prev.backgroundColor) {
+      this.applyBackgroundColor(next.backgroundColor);
+    }
+
     const particleCountChanged =
       typeof next.particleCount === "number" && next.particleCount !== prev.particleCount;
     const textIndexChanged =
@@ -200,8 +226,12 @@ export class ParticleTextApp {
       this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
       window.removeEventListener("blur", this.onPointerLeave);
     }
+    if (this.onWindowPointerMove) {
+      window.removeEventListener("pointermove", this.onWindowPointerMove);
+    }
     this.onPointerMove = null;
     this.onPointerLeave = null;
+    this.onWindowPointerMove = null;
 
     if (this.onKeyDown) {
       window.removeEventListener("keydown", this.onKeyDown);
@@ -226,8 +256,19 @@ export class ParticleTextApp {
       this.pointerInside = false;
     };
 
+    this.onWindowPointerMove = (ev: PointerEvent) => {
+      const rect = this.canvas.getBoundingClientRect();
+      const inside =
+        ev.clientX >= rect.left &&
+        ev.clientX <= rect.right &&
+        ev.clientY >= rect.top &&
+        ev.clientY <= rect.bottom;
+      if (!inside) this.pointerInside = false;
+    };
+
     this.canvas.addEventListener("pointermove", this.onPointerMove);
     this.canvas.addEventListener("pointerleave", this.onPointerLeave);
+    window.addEventListener("pointermove", this.onWindowPointerMove);
     // Fallback when pointer leaves window.
     window.addEventListener("blur", this.onPointerLeave);
   }
@@ -262,6 +303,8 @@ export class ParticleTextApp {
     this.morphElapsed = 0;
     this.seedsX = new Float32Array(nextCount);
     this.seedsY = new Float32Array(nextCount);
+    this.disturbed = new Float32Array(nextCount);
+    this.convergeElapsed = 0;
 
     // Deterministic-ish seeds per rebuild.
     for (let i = 0; i < nextCount; i++) {
@@ -319,6 +362,12 @@ export class ParticleTextApp {
   private smoothstep01(t: number): number {
     const x = Math.max(0, Math.min(1, t));
     return x * x * (3 - 2 * x);
+  }
+
+  private getConvergenceBoost(): number {
+    // Slower and smoother initial formation:
+    // starts around ~4.2x and decays progressively to ~1x.
+    return 1 + 3.2 * Math.exp(-this.convergeElapsed / this.convergeWarmupSec);
   }
 
   private getTextMorphDurationSec(): number {
@@ -412,29 +461,56 @@ export class ParticleTextApp {
     // Smooth mouse influence to avoid sudden force changes.
     const influenceTarget = this.pointerInside ? 1 : 0;
     // Use different rates for enter/exit so the "release" feels natural.
-    const fadeInRate = 14; // higher => faster response
-    const fadeOutRate = 6; // lower => softer return
+    const fadeInRate = 16; // higher => faster response
+    const fadeOutRate = 18; // higher => faster elastic return
     const fadeRate = influenceTarget > this.mouseInfluence ? fadeInRate : fadeOutRate;
     const deltaInfluence = influenceTarget - this.mouseInfluence;
     this.mouseInfluence += deltaInfluence * (1 - Math.exp(-fadeRate * dt));
 
+    // Detect the moment the pointer leaves the canvas and start the elastic
+    // return timer. We reset it here (after mouseInfluence has been updated so
+    // the new value is already available for the current step).
+    if (!this.pointerInside && this.prevPointerInside) {
+      this.restoreElapsed = 0;
+    }
+    this.prevPointerInside = this.pointerInside;
+    if (isFinite(this.restoreElapsed)) {
+      this.restoreElapsed += dt;
+      // Stop tracking once the return animation window has passed.
+      if (this.restoreElapsed > this.settleSnapSec * 1.5) {
+        this.restoreElapsed = Infinity;
+      }
+    }
+
     this.simTime += dt;
+    this.convergeElapsed += dt;
     this.advanceAutoText(dt);
 
     const { w, h } = this.state;
-    const halfW = w / 2;
-    const halfH = h / 2;
-    const invMinDim = 2 / Math.max(1, Math.min(w, h));
+    const minDim = Math.max(1, Math.min(w, h));
 
     const dampingFactor = Math.pow(this.params.damping, dt * 60);
     // Extra damping during return helps avoid uncontrolled oscillations.
+    // During the initial warmup (no mouse influence) we reduce damping so
+    // convergence to the text is fast and visible without user input.
     const returnFactor = 1 - this.mouseInfluence; // 0..1
-    const dampingExtra = 1 - 0.12 * returnFactor; // never invert damping
+    const warmup01 = Math.exp(-this.convergeElapsed / (this.convergeWarmupSec * 0.8)); // 1->0
+    const dampingExtra = 1 - 0.12 * returnFactor * (1 - warmup01); // ~1 during warmup, ~0.88 later
     const dampingFactorEff = dampingFactor * dampingExtra;
-    const springStrength = this.params.springStrength;
-    const mouseAccelScale = 0.12;
+    const springStrengthBase = this.params.springStrength * this.getConvergenceBoost();
+    // After mouse interaction, briefly increase spring attraction so the text
+    // snaps back quickly with an elastic feel.
+    const returnBoost = 1 + (1 - this.mouseInfluence) * 1.1;
+    // Additional boost while the elastic-return window is active.
+    const returnSnapBlend = isFinite(this.restoreElapsed)
+      ? Math.max(0, 1 - this.restoreElapsed / this.settleSnapSec)
+      : 0;
+    const returnSpringBoost = 1 + returnSnapBlend * 3.0;
+    const springStrength = springStrengthBase * returnBoost * returnSpringBoost;
+    const mouseAccelScale = 1.1;
 
     const rPx = this.params.mouseRadius;
+    const rClip = (rPx * 2) / minDim;
 
     const maxVel = 4.0;
     const clamp = (v: number) => Math.max(-maxVel, Math.min(maxVel, v));
@@ -447,6 +523,10 @@ export class ParticleTextApp {
     const aliveOffsetClipAmp = this.params.aliveNoiseAmplitude * 0.02 * aliveScale;
     const t = this.simTime;
     const f = this.params.aliveNoiseFrequency;
+    // Blend initial-formation snap and post-mouse-exit return snap so that
+    // the elastic return reuses the same position-pull + velocity-damping pass.
+    const initialSnapBlend = Math.max(0, 1 - this.convergeElapsed / this.settleSnapSec);
+    const snapBlend = Math.max(initialSnapBlend, returnSnapBlend);
 
     let dstTargets: Float32Array | null = null;
     let morphBlend = 0;
@@ -500,7 +580,22 @@ export class ParticleTextApp {
       let ax = tx * springStrength;
       let ay = ty * springStrength;
 
+      // Ensure the very first formation is unmistakably fast and readable:
+      // during the initial settle window, blend in a direct position pull
+      // toward the target. This is softer than teleporting but much more
+      // decisive than pure spring integration.
+      if (snapBlend > 0) {
+        const snapStrength = 0.1 * snapBlend;
+        x += tx * snapStrength;
+        y += ty * snapStrength;
+        // Also damp residual velocity while settling so particles stop looking
+        // like a generic cloud and quickly lock into glyph shapes.
+        this.velocities[ix] *= 1 - 0.35 * snapBlend;
+        this.velocities[ix + 1] *= 1 - 0.35 * snapBlend;
+      }
+
       // Mouse repulsion (local, smooth falloff).
+      let localRepel = 0;
       if (this.mouseInfluence > 0.001) {
         const dx = x - this.mouseXClip;
         const dy = y - this.mouseYClip;
@@ -508,16 +603,36 @@ export class ParticleTextApp {
 
         if (distClipSq > 1e-10) {
           const distClip = Math.sqrt(distClipSq);
-          const distPx = Math.sqrt(
-            (dx * halfW) * (dx * halfW) + (dy * halfH) * (dy * halfH)
-          );
-          if (distPx < rPx) {
-            const t = 1 - distPx / rPx;
+          if (distClip < rClip) {
+            const t = 1 - distClip / rClip;
             const falloff = t * t * (3 - 2 * t); // smoothstep-like
             const force = this.params.mouseForce * mouseAccelScale * falloff * this.mouseInfluence;
-            ax += (dx / distClip) * force * invMinDim * 8;
-            ay += (dy / distClip) * force * invMinDim * 8;
+            ax += (dx / distClip) * force;
+            ay += (dy / distClip) * force;
+            localRepel = falloff * this.mouseInfluence;
           }
+        }
+      }
+
+      // Local disturbance memory:
+      // - increases quickly when particle is repelled by mouse
+      // - decays smoothly afterward
+      // This allows only the disturbed region to elastically return.
+      const prevDisturbed = this.disturbed[i]!;
+      const rise = localRepel * 0.55;
+      const decay = 1 - Math.exp(-5.5 * dt);
+      const disturbedNow = prevDisturbed + (rise - prevDisturbed) * decay;
+      this.disturbed[i] = disturbedNow;
+
+      // Local elastic return for disturbed particles only.
+      if (disturbedNow > 0.001) {
+        const localRestore = disturbedNow * (0.14 * dt * 60);
+        x += tx * localRestore;
+        y += ty * localRestore;
+        // Kill residual momentum after hover so particles can re-lock to glyphs.
+        if (!this.pointerInside) {
+          this.velocities[ix] *= 1 - disturbedNow * 0.22;
+          this.velocities[ix + 1] *= 1 - disturbedNow * 0.22;
         }
       }
 
@@ -555,9 +670,10 @@ export class ParticleTextApp {
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.positions);
 
     const pointSize = this.computePointSizePx();
+    const [pr, pg, pb] = this.hexToRgb01(this.params.particleColor ?? "#f2fafe");
     gl.useProgram(this.program);
     gl.uniform1f(this.uPointSize, pointSize);
-    gl.uniform3f(this.uColor, 0.95, 0.98, 1.0);
+    gl.uniform3f(this.uColor, pr, pg, pb);
 
     gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.POINTS, 0, this.particleCount);
@@ -568,7 +684,26 @@ export class ParticleTextApp {
     const dpr = this.state.dpr;
     const densityFactor = Math.sqrt(12000 / Math.max(1, this.particleCount));
     const size = 1.7 * dpr * densityFactor;
-    return Math.max(1, Math.min(3, size));
+    return Math.max(1, Math.min(4, size));
+  }
+
+  private applyBackgroundColor(hex: string): void {
+    document.body.style.background = hex;
+  }
+
+  private hexToRgb01(hex: string): [number, number, number] {
+    const h = hex.replace("#", "");
+    const full = h.length === 3
+      ? h.split("").map(c => c + c).join("")
+      : h;
+    const r = parseInt(full.slice(0, 2), 16) / 255;
+    const g = parseInt(full.slice(2, 4), 16) / 255;
+    const b = parseInt(full.slice(4, 6), 16) / 255;
+    return [
+      isNaN(r) ? 0.95 : r,
+      isNaN(g) ? 0.98 : g,
+      isNaN(b) ? 1.0 : b,
+    ];
   }
 }
 

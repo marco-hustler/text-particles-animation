@@ -44,15 +44,33 @@ export function sampleTextTargets({
   if (!ctx) throw new Error("TargetSampler: 2D context unavailable");
 
   ctx.clearRect(0, 0, sw, sh);
+  const drawText = (text ?? "").trim() || "TEXT";
 
-  const fontSize = Math.max(10, Math.floor(Math.min(sw, sh) * 0.18));
-  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+  // Fit text to the viewport much more aggressively so the particle target
+  // shape is clearly legible even at first load on wide screens.
+  const maxTextWidth = sw * 0.68;
+  const maxTextHeight = sh * 0.28;
+  let fontSize = Math.max(24, Math.floor(Math.min(sw, sh) * 0.24));
+
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(255,255,255,1)";
 
-  // Draw centered text. Keep it simple: we only need a coherent alpha mask.
-  const drawText = text ?? "";
+  while (fontSize > 18) {
+    ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+    const metrics = ctx.measureText(drawText);
+    const textWidth = metrics.width;
+    const textHeight =
+      (metrics.actualBoundingBoxAscent || fontSize * 0.72) +
+      (metrics.actualBoundingBoxDescent || fontSize * 0.18);
+
+    if (textWidth <= maxTextWidth && textHeight <= maxTextHeight) {
+      break;
+    }
+    fontSize -= 4;
+  }
+
+  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
   ctx.fillText(drawText, sw / 2, sh / 2);
 
   const img = ctx.getImageData(0, 0, sw, sh);
