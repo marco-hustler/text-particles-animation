@@ -242,8 +242,8 @@ export function createControlsOverlay(
       position: fixed;
       top: 16px;
       right: 16px;
-      width: 300px;
-      padding: 12px;
+      width: 340px;
+      padding: 12px 14px;
       border: 1px solid var(--ui-border);
       background: var(--ui-bg);
       border-radius: 12px;
@@ -264,7 +264,7 @@ export function createControlsOverlay(
       margin: 7px 0;
     }
     .controls-label{
-      width: 112px;
+      width: 108px;
       flex-shrink: 0;
       white-space: nowrap;
       overflow: hidden;
@@ -272,7 +272,7 @@ export function createControlsOverlay(
     }
     .controls input[type="range"]{ flex: 1; pointer-events: auto; }
     .controls-value{
-      width: 46px;
+      width: 52px;
       text-align: right;
       font-variant-numeric: tabular-nums;
       opacity: .9;
