@@ -24,6 +24,8 @@ export class ParticleTextApp {
   private positions: Float32Array = new Float32Array(0); // clip-space [-1..1]
   private velocities: Float32Array = new Float32Array(0);
   private targets: Float32Array = new Float32Array(0);
+  private targetsNext: Float32Array | null = null;
+  private morphElapsed = 0;
   private particleCount = 0;
 
   private seedsX: Float32Array = new Float32Array(0);
@@ -36,6 +38,8 @@ export class ParticleTextApp {
 
   private onPointerMove: ((ev: PointerEvent) => void) | null = null;
   private onPointerLeave: ((ev: Event) => void) | null = null;
+  private onKeyDown: ((ev: KeyboardEvent) => void) | null = null;
+  private autoTextElapsed = 0;
 
   constructor(canvas: HTMLCanvasElement, params: ParticleTextParams) {
     this.canvas = canvas;
@@ -137,6 +141,7 @@ export class ParticleTextApp {
     if (this.rafId != null) return;
 
     this.installPointerListeners();
+    this.installKeyboardListeners();
     this.resize();
     this.rebuildSimulation(true);
 
@@ -161,7 +166,8 @@ export class ParticleTextApp {
 
     // Only rebuild targets (keep current positions) when we already have particles.
     if (this.particleCount > 0) {
-      this.updateTargets();
+      // Morph to the new targets to avoid any apparent teleport on resize/high-DPI.
+      this.startTextMorph(this.params.textIndex);
     }
   }
 
@@ -180,7 +186,7 @@ export class ParticleTextApp {
     }
 
     if (textIndexChanged) {
-      this.updateTargets();
+      this.startTextMorph(this.params.textIndex);
     }
   }
 
@@ -196,6 +202,11 @@ export class ParticleTextApp {
     }
     this.onPointerMove = null;
     this.onPointerLeave = null;
+
+    if (this.onKeyDown) {
+      window.removeEventListener("keydown", this.onKeyDown);
+      this.onKeyDown = null;
+    }
   }
 
   private installPointerListeners(): void {
@@ -221,6 +232,25 @@ export class ParticleTextApp {
     window.addEventListener("blur", this.onPointerLeave);
   }
 
+  private installKeyboardListeners(): void {
+    if (this.onKeyDown) return;
+    this.onKeyDown = (ev: KeyboardEvent) => {
+      const len = this.params.texts.length;
+      if (len <= 1) return;
+
+      if (ev.key === "ArrowRight" || ev.key === " ") {
+        ev.preventDefault();
+        const next = (this.params.textIndex + 1) % len;
+        this.setParams({ textIndex: next });
+      } else if (ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        const prev = (this.params.textIndex - 1 + len) % len;
+        this.setParams({ textIndex: prev });
+      }
+    };
+    window.addEventListener("keydown", this.onKeyDown);
+  }
+
   private rebuildSimulation(resetPositions: boolean): void {
     const nextCount = Math.max(1, Math.floor(this.params.particleCount));
     this.particleCount = nextCount;
@@ -228,6 +258,8 @@ export class ParticleTextApp {
     this.positions = new Float32Array(nextCount * 2);
     this.velocities = new Float32Array(nextCount * 2);
     this.targets = new Float32Array(nextCount * 2);
+    this.targetsNext = null;
+    this.morphElapsed = 0;
     this.seedsX = new Float32Array(nextCount);
     this.seedsY = new Float32Array(nextCount);
 
@@ -249,7 +281,7 @@ export class ParticleTextApp {
       }
     }
 
-    this.updateTargets();
+    this.updateTargetsInstant();
 
     // Upload initial position buffer.
     const gl = this.gl;
@@ -259,7 +291,7 @@ export class ParticleTextApp {
     gl.bindVertexArray(null);
   }
 
-  private updateTargets(): void {
+  private updateTargetsInstant(): void {
     const text = this.params.texts[this.params.textIndex] ?? "";
     if (this.particleCount <= 0) return;
 
@@ -271,12 +303,91 @@ export class ParticleTextApp {
     });
 
     if (sampled.length !== this.targets.length) {
-      // Shouldn't happen, but keep it safe.
+      // Safety: keep arrays consistent with the sampler.
       this.targets = sampled;
       this.positions = new Float32Array(this.particleCount * 2);
       this.velocities = new Float32Array(this.particleCount * 2);
     } else {
       this.targets.set(sampled);
+    }
+
+    // Any morph in flight must stop once we've committed targets instantly.
+    this.targetsNext = null;
+    this.morphElapsed = 0;
+  }
+
+  private smoothstep01(t: number): number {
+    const x = Math.max(0, Math.min(1, t));
+    return x * x * (3 - 2 * x);
+  }
+
+  private getTextMorphDurationSec(): number {
+    const ms = this.params.textMorphDurationMs ?? 650;
+    return Math.max(1 / 120, ms / 1000);
+  }
+
+  private commitCurrentMorphBlend(): void {
+    if (!this.targetsNext) return;
+
+    const durationSec = this.getTextMorphDurationSec();
+    const t = durationSec > 0 ? Math.min(1, this.morphElapsed / durationSec) : 1;
+    const alpha = this.smoothstep01(t);
+    const dst = this.targetsNext;
+
+    for (let i = 0; i < this.targets.length; i++) {
+      this.targets[i] = this.targets[i] * (1 - alpha) + dst[i] * alpha;
+    }
+
+    this.targetsNext = null;
+    this.morphElapsed = 0;
+  }
+
+  private sampleTargetsForTextIndex(textIndex: number): Float32Array {
+    const text = this.params.texts[textIndex] ?? "";
+    return sampleTextTargets({
+      particleCount: this.particleCount,
+      text,
+      canvasWidth: this.canvas.width,
+      canvasHeight: this.canvas.height,
+    });
+  }
+
+  private startTextMorph(textIndex: number): void {
+    if (this.particleCount <= 0 || this.params.texts.length <= 0) return;
+
+    // Ensure the "from" targets represent the current blended state.
+    this.commitCurrentMorphBlend();
+
+    const sampled = this.sampleTargetsForTextIndex(textIndex);
+    if (sampled.length !== this.targets.length) {
+      // Extreme safety: keep simulation arrays consistent.
+      this.targets = sampled;
+      this.targetsNext = null;
+      this.morphElapsed = 0;
+      return;
+    }
+
+    this.targetsNext = sampled;
+    this.morphElapsed = 0;
+  }
+
+  private advanceAutoText(dt: number): void {
+    const mode = this.params.textSwitchMode ?? "manual";
+    if (mode !== "auto") return;
+    const len = this.params.texts.length;
+    if (len <= 1) return;
+
+    const intervalMs = this.params.textSwitchIntervalMs ?? 2500;
+    const intervalSec = intervalMs / 1000;
+    if (intervalSec <= 0) return;
+
+    this.autoTextElapsed += dt;
+    while (this.autoTextElapsed >= intervalSec) {
+      this.autoTextElapsed -= intervalSec;
+      const nextIndex = (this.params.textIndex + 1) % len;
+      if (nextIndex !== this.params.textIndex) {
+        this.setParams({ textIndex: nextIndex });
+      }
     }
   }
 
@@ -308,6 +419,7 @@ export class ParticleTextApp {
     this.mouseInfluence += deltaInfluence * (1 - Math.exp(-fadeRate * dt));
 
     this.simTime += dt;
+    this.advanceAutoText(dt);
 
     const { w, h } = this.state;
     const halfW = w / 2;
@@ -336,6 +448,25 @@ export class ParticleTextApp {
     const t = this.simTime;
     const f = this.params.aliveNoiseFrequency;
 
+    let dstTargets: Float32Array | null = null;
+    let morphBlend = 0;
+    if (this.targetsNext) {
+      const durationSec = this.getTextMorphDurationSec();
+      this.morphElapsed += dt;
+      const progress = durationSec > 0 ? Math.min(1, this.morphElapsed / durationSec) : 1;
+      morphBlend = this.smoothstep01(progress);
+      dstTargets = this.targetsNext;
+
+      if (progress >= 1) {
+        // Morph complete: commit targets and stop blending.
+        this.targets = dstTargets;
+        this.targetsNext = null;
+        this.morphElapsed = 0;
+        dstTargets = null;
+        morphBlend = 0;
+      }
+    }
+
     for (let i = 0; i < this.particleCount; i++) {
       const ix = i * 2;
       let x = this.positions[ix]!;
@@ -357,8 +488,15 @@ export class ParticleTextApp {
       const m3 = Math.cos(t * f * 1.17 + sy * 0.58);
       const ny = (m1 + 0.55 * m2 + 0.25 * m3) / (1 + 0.55 + 0.25);
 
-      const tx = this.targets[ix]! + nx * aliveOffsetClipAmp - x;
-      const ty = this.targets[ix + 1]! + ny * aliveOffsetClipAmp - y;
+      const targetX = dstTargets
+        ? this.targets[ix]! * (1 - morphBlend) + dstTargets[ix]! * morphBlend
+        : this.targets[ix]!;
+      const targetY = dstTargets
+        ? this.targets[ix + 1]! * (1 - morphBlend) + dstTargets[ix + 1]! * morphBlend
+        : this.targets[ix + 1]!;
+
+      const tx = targetX + nx * aliveOffsetClipAmp - x;
+      const ty = targetY + ny * aliveOffsetClipAmp - y;
       let ax = tx * springStrength;
       let ay = ty * springStrength;
 

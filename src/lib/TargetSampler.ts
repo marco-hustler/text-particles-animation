@@ -102,36 +102,40 @@ export function sampleTextTargets({
   const candCount = candidates.length / 2;
   if (candCount <= 0) return out;
 
-  const pickOne = () => {
-    const ci = Math.floor(Math.random() * candCount);
-    return [candidates[ci * 2]!, candidates[ci * 2 + 1]!];
+  // Deterministic particle->pixel mapping: avoid Math.random so target remapping
+  // between texts/resizes doesn't cause uncontrolled particle "permutations".
+  const hashToUnit = (i: number, salt: number) => {
+    const x = Math.sin((i + 1) * 127.1 + salt * 311.7) * 43758.5453123;
+    return x - Math.floor(x);
   };
 
   if (candCount >= safeParticleCount) {
+    // Cover the candidate set in quantiles.
     for (let i = 0; i < safeParticleCount; i++) {
-      const [xClip, yClip] = pickOne();
-      out[i * 2] = xClip;
-      out[i * 2 + 1] = yClip;
+      const k = Math.min(
+        candCount - 1,
+        Math.floor(((i + 0.5) * candCount) / safeParticleCount)
+      );
+      out[i * 2] = candidates[k * 2]!;
+      out[i * 2 + 1] = candidates[k * 2 + 1]!;
     }
     return out;
   }
 
-  // Not enough pixels: duplicate and jitter to reach the target count.
-  for (let i = 0; i < candCount; i++) {
-    out[i * 2] = candidates[i * 2]!;
-    out[i * 2 + 1] = candidates[i * 2 + 1]!;
-  }
-
+  // Not enough pixels: map each particle to a candidate in quantiles and
+  // apply a small deterministic jitter.
   const jitterPx = bestStride * 0.45 + 0.9;
   const jitterClipX = (jitterPx / sw) * 2;
   const jitterClipY = (jitterPx / sh) * 2;
 
-  for (let i = candCount; i < safeParticleCount; i++) {
-    const [xClip, yClip] = pickOne();
-    const jx = (Math.random() * 2 - 1) * jitterClipX;
-    const jy = (Math.random() * 2 - 1) * jitterClipY;
-    out[i * 2] = xClip + jx;
-    out[i * 2 + 1] = yClip + jy;
+  for (let i = 0; i < safeParticleCount; i++) {
+    const k = Math.min(candCount - 1, Math.floor((i * candCount) / safeParticleCount));
+    const baseX = candidates[k * 2]!;
+    const baseY = candidates[k * 2 + 1]!;
+    const jx = (hashToUnit(i, 1) * 2 - 1) * jitterClipX;
+    const jy = (hashToUnit(i, 2) * 2 - 1) * jitterClipY;
+    out[i * 2] = baseX + jx;
+    out[i * 2 + 1] = baseY + jy;
   }
 
   return out;

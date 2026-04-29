@@ -14,6 +14,9 @@ const app = new ParticleTextApp(canvas, {
   aliveNoiseFrequency: 0.9,
   texts: ["HELLO", "WORLD", "TEXT"],
   textIndex: 0,
+  textSwitchMode: "auto",
+  textSwitchIntervalMs: 2400,
+  textMorphDurationMs: 700,
 });
 
 app.start();
